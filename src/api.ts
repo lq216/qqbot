@@ -44,6 +44,32 @@ export function clearTokenCache(): void {
 }
 
 /**
+ * msg_seq 追踪器 - 用于对同一条消息的多次回复
+ * key: msg_id, value: 当前 seq 值
+ */
+const msgSeqTracker = new Map<string, number>();
+
+/**
+ * 获取并递增消息序号
+ */
+export function getNextMsgSeq(msgId: string): number {
+  const current = msgSeqTracker.get(msgId) ?? 0;
+  const next = current + 1;
+  msgSeqTracker.set(msgId, next);
+  
+  // 清理过期的序号（超过 5 次或 60 分钟后无意义）
+  // 简单策略：保留最近 1000 条
+  if (msgSeqTracker.size > 1000) {
+    const keys = Array.from(msgSeqTracker.keys());
+    for (let i = 0; i < 500; i++) {
+      msgSeqTracker.delete(keys[i]);
+    }
+  }
+  
+  return next;
+}
+
+/**
  * API 请求封装
  */
 export async function apiRequest<T = unknown>(
@@ -93,9 +119,11 @@ export async function sendC2CMessage(
   content: string,
   msgId?: string
 ): Promise<{ id: string; timestamp: number }> {
+  const msgSeq = msgId ? getNextMsgSeq(msgId) : 1;
   return apiRequest(accessToken, "POST", `/v2/users/${openid}/messages`, {
     content,
     msg_type: 0,
+    msg_seq: msgSeq,
     ...(msgId ? { msg_id: msgId } : {}),
   });
 }
@@ -124,9 +152,11 @@ export async function sendGroupMessage(
   content: string,
   msgId?: string
 ): Promise<{ id: string; timestamp: string }> {
+  const msgSeq = msgId ? getNextMsgSeq(msgId) : 1;
   return apiRequest(accessToken, "POST", `/v2/groups/${groupOpenid}/messages`, {
     content,
     msg_type: 0,
+    msg_seq: msgSeq,
     ...(msgId ? { msg_id: msgId } : {}),
   });
 }
