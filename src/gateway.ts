@@ -241,8 +241,8 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
         // 处理附件（图片等）- 下载到本地供 clawdbot 访问
         let attachmentInfo = "";
         const imageUrls: string[] = [];
-        // 默认存到当前工作目录的 downloads 子目录（这样 clawdbot 可以访问）
-        const downloadDir = process.env.QQBOT_DOWNLOAD_DIR || path.join(process.cwd(), "downloads");
+        // 存到 clawdbot 工作目录下的 downloads 文件夹
+        const downloadDir = path.join(process.env.HOME || "/home/ubuntu", "clawd", "downloads");
         
         if (event.attachments?.length) {
           for (const att of event.attachments) {
