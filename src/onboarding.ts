@@ -29,12 +29,14 @@ interface QQBotChannelConfig {
   clientSecret?: string;
   clientSecretFile?: string;
   name?: string;
+  imageServerBaseUrl?: string;
   accounts?: Record<string, {
     enabled?: boolean;
     appId?: string;
     clientSecret?: string;
     clientSecretFile?: string;
     name?: string;
+    imageServerBaseUrl?: string;
   }>;
 }
 
@@ -195,6 +197,44 @@ export const qqbotOnboardingAdapter: ChannelOnboardingAdapter = {
       ).trim();
     }
 
+    // 询问是否配置图片发送功能
+    let imageServerBaseUrl: string | null = null;
+    const existingImageUrl = (next.channels?.qqbot as QQBotChannelConfig)?.imageServerBaseUrl 
+      || process.env.QQBOT_IMAGE_SERVER_BASE_URL;
+    
+    const wantImageSupport = await prompter.confirm({
+      message: "是否启用图片发送功能？（需要服务器有公网 IP）",
+      initialValue: Boolean(existingImageUrl),
+    });
+    
+    if (wantImageSupport) {
+      imageServerBaseUrl = String(
+        await prompter.text({
+          message: "请输入服务器公网地址（格式: http://公网IP:18765）",
+          placeholder: "例如: http://123.45.67.89:18765",
+          initialValue: existingImageUrl || undefined,
+          validate: (value) => {
+            if (!value?.trim()) return "公网地址不能为空";
+            if (!value.startsWith("http://") && !value.startsWith("https://")) {
+              return "地址必须以 http:// 或 https:// 开头";
+            }
+            return undefined;
+          },
+        }),
+      ).trim();
+      
+      await prompter.note(
+        [
+          "图片发送功能已启用。请确保：",
+          "1. 服务器防火墙已开放 18765 端口",
+          "2. 云服务器安全组已放行 18765 端口（入站）",
+          "",
+          "如果图片发送失败，请检查端口是否可从公网访问。",
+        ].join("\n"),
+        "图片功能配置",
+      );
+    }
+
     // 应用配置
     if (appId && clientSecret) {
       if (accountId === DEFAULT_ACCOUNT_ID) {
@@ -207,6 +247,7 @@ export const qqbotOnboardingAdapter: ChannelOnboardingAdapter = {
               enabled: true,
               appId,
               clientSecret,
+              ...(imageServerBaseUrl ? { imageServerBaseUrl } : {}),
             },
           },
         };
@@ -225,6 +266,38 @@ export const qqbotOnboardingAdapter: ChannelOnboardingAdapter = {
                   enabled: true,
                   appId,
                   clientSecret,
+                  ...(imageServerBaseUrl ? { imageServerBaseUrl } : {}),
+                },
+              },
+            },
+          },
+        };
+      }
+    } else if (imageServerBaseUrl) {
+      // 只更新 imageServerBaseUrl
+      if (accountId === DEFAULT_ACCOUNT_ID) {
+        next = {
+          ...next,
+          channels: {
+            ...next.channels,
+            qqbot: {
+              ...next.channels?.qqbot,
+              imageServerBaseUrl,
+            },
+          },
+        };
+      } else {
+        next = {
+          ...next,
+          channels: {
+            ...next.channels,
+            qqbot: {
+              ...next.channels?.qqbot,
+              accounts: {
+                ...(next.channels?.qqbot as QQBotChannelConfig)?.accounts,
+                [accountId]: {
+                  ...(next.channels?.qqbot as QQBotChannelConfig)?.accounts?.[accountId],
+                  imageServerBaseUrl,
                 },
               },
             },

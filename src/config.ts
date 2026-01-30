@@ -63,6 +63,7 @@ export function resolveQQBotAccount(
       dmPolicy: qqbot?.dmPolicy,
       allowFrom: qqbot?.allowFrom,
       systemPrompt: qqbot?.systemPrompt,
+      imageServerBaseUrl: qqbot?.imageServerBaseUrl,
     };
     appId = qqbot?.appId ?? "";
   } else {
@@ -97,6 +98,7 @@ export function resolveQQBotAccount(
     clientSecret,
     secretSource,
     systemPrompt: accountConfig.systemPrompt,
+    imageServerBaseUrl: accountConfig.imageServerBaseUrl || process.env.QQBOT_IMAGE_SERVER_BASE_URL,
     config: accountConfig,
   };
 }
@@ -107,7 +109,7 @@ export function resolveQQBotAccount(
 export function applyQQBotAccountConfig(
   cfg: MoltbotConfig,
   accountId: string,
-  input: { appId?: string; clientSecret?: string; clientSecretFile?: string; name?: string }
+  input: { appId?: string; clientSecret?: string; clientSecretFile?: string; name?: string; imageServerBaseUrl?: string }
 ): MoltbotConfig {
   const next = { ...cfg };
 
@@ -124,6 +126,7 @@ export function applyQQBotAccountConfig(
             ? { clientSecretFile: input.clientSecretFile }
             : {}),
         ...(input.name ? { name: input.name } : {}),
+        ...(input.imageServerBaseUrl ? { imageServerBaseUrl: input.imageServerBaseUrl } : {}),
       },
     };
   } else {
@@ -144,6 +147,7 @@ export function applyQQBotAccountConfig(
                 ? { clientSecretFile: input.clientSecretFile }
                 : {}),
             ...(input.name ? { name: input.name } : {}),
+            ...(input.imageServerBaseUrl ? { imageServerBaseUrl: input.imageServerBaseUrl } : {}),
           },
         },
       },

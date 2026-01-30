@@ -96,8 +96,15 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
     throw new Error("QQBot not configured (missing appId or clientSecret)");
   }
 
-  // 尝试启动图床服务器
-  const imageServerBaseUrl = await ensureImageServer(log);
+  // 如果配置了公网 URL，启动图床服务器
+  let imageServerBaseUrl: string | null = null;
+  if (account.imageServerBaseUrl) {
+    await ensureImageServer(log);
+    imageServerBaseUrl = account.imageServerBaseUrl;
+    log?.info(`[qqbot:${account.accountId}] Image server enabled with URL: ${imageServerBaseUrl}`);
+  } else {
+    log?.info(`[qqbot:${account.accountId}] Image server disabled (no imageServerBaseUrl configured)`);
+  }
 
   let reconnectAttempts = 0;
   let isAborted = false;
@@ -232,15 +239,17 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
         const envelopeOptions = pluginRuntime.channel.reply.resolveEnvelopeFormatOptions(cfg);
 
         // 组装消息体，添加系统提示词
-        const builtinPrompt = `由于平台限制，你的回复中不可以包含任何URL。
+        let builtinPrompt = "由于平台限制，你的回复中不可以包含任何URL。";
+        
+        // 只有配置了图床公网地址，才告诉 AI 可以发送图片
+        if (imageServerBaseUrl) {
+          builtinPrompt += `
 
 【发送图片】
-如果需要发送本地图片文件给用户，请在回复中使用以下格式：
-MEDIA:/绝对路径/图片文件.png
-
-例如：MEDIA:/home/ubuntu/clawd/downloads/image.png
-
-系统会自动将该路径的图片发送给用户。支持 png、jpg、gif、webp 格式。`;
+你可以发送本地图片文件给用户。只需在回复中直接引用图片的绝对路径即可，系统会自动处理。
+支持 png、jpg、gif、webp 格式。`;
+        }
+        
         const systemPrompts = [builtinPrompt];
         if (account.systemPrompt) {
           systemPrompts.push(account.systemPrompt);
@@ -486,13 +495,16 @@ MEDIA:/绝对路径/图片文件.png
                   textWithoutImages = textWithoutImages.replace(match[0], "").trim();
                 }
 
-                // 处理剩余文本中的 URL 点号
-                const originalText = textWithoutImages;
-                textWithoutImages = textWithoutImages.replace(/([a-zA-Z0-9])\.([a-zA-Z0-9])/g, "$1_$2");
-                
-                const hasReplacement = textWithoutImages !== originalText;
-                if (hasReplacement && textWithoutImages.trim()) {
-                  textWithoutImages += "\n\n（由于平台限制，回复中的部分符号已被替换）";
+                // 处理剩余文本中的 URL 点号（只有在没有图片的情况下才替换，避免误伤）
+                const hasImages = imageUrls.length > 0;
+                let hasReplacement = false;
+                if (!hasImages) {
+                  const originalText = textWithoutImages;
+                  textWithoutImages = textWithoutImages.replace(/([a-zA-Z0-9])\.([a-zA-Z0-9])/g, "$1_$2");
+                  hasReplacement = textWithoutImages !== originalText;
+                  if (hasReplacement && textWithoutImages.trim()) {
+                    textWithoutImages += "\n\n（由于平台限制，回复中的部分符号已被替换）";
+                  }
                 }
 
                 try {
