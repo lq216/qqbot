@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import path from "node:path";
 import type { ResolvedQQBotAccount, WSPayload, C2CMessageEvent, GuildMessageEvent, GroupMessageEvent } from "./types.js";
 import { getAccessToken, getGatewayUrl, sendC2CMessage, sendChannelMessage, sendGroupMessage, clearTokenCache, sendC2CImageMessage, sendGroupImageMessage } from "./api.js";
 import { getQQBotRuntime } from "./runtime.js";
@@ -240,7 +241,8 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
         // 处理附件（图片等）- 下载到本地供 clawdbot 访问
         let attachmentInfo = "";
         const imageUrls: string[] = [];
-        const downloadDir = process.env.QQBOT_DOWNLOAD_DIR || "./qqbot-downloads";
+        // 默认存到当前工作目录的 downloads 子目录（这样 clawdbot 可以访问）
+        const downloadDir = process.env.QQBOT_DOWNLOAD_DIR || path.join(process.cwd(), "downloads");
         
         if (event.attachments?.length) {
           for (const att of event.attachments) {
