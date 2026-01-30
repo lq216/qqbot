@@ -47,7 +47,8 @@ const QUICK_DISCONNECT_THRESHOLD = 5000; // 5秒内断开视为快速断开
 
 // 图床服务器配置（可通过环境变量覆盖）
 const IMAGE_SERVER_PORT = parseInt(process.env.QQBOT_IMAGE_SERVER_PORT || "18765", 10);
-const IMAGE_SERVER_DIR = process.env.QQBOT_IMAGE_SERVER_DIR || "./qqbot-images";
+// 使用绝对路径，确保文件保存和读取使用同一目录
+const IMAGE_SERVER_DIR = process.env.QQBOT_IMAGE_SERVER_DIR || path.join(process.env.HOME || "/home/ubuntu", "clawd", "qqbot-images");
 
 export interface GatewayContext {
   account: ResolvedQQBotAccount;
@@ -550,9 +551,9 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
                       log?.info(`[qqbot:${account.accountId}] Sent image: ${imageUrl.slice(0, 50)}...`);
                     } catch (imgErr) {
                       log?.error(`[qqbot:${account.accountId}] Failed to send image: ${imgErr}`);
-                      // 图片发送失败时，把 URL 加回文本（已处理过点号的版本）
-                      const safeUrl = imageUrl.replace(/([a-zA-Z0-9])\.([a-zA-Z0-9])/g, "$1_$2");
-                      textWithoutImages = `[图片: ${safeUrl}]\n${textWithoutImages}`;
+                      // 图片发送失败时，显示错误信息而不是 URL
+                      const errMsg = String(imgErr).slice(0, 200);
+                      textWithoutImages = `[图片发送失败: ${errMsg}]\n${textWithoutImages}`;
                     }
                   }
 
