@@ -13,6 +13,22 @@ QQ 官方机器人 API 的 Moltbot 渠道插件，支持 C2C 私聊、群聊 @�
 ## 使用示例：
 <img width="1852" height="1082" alt="image" src="https://github.com/user-attachments/assets/a16d582b-708c-473e-b3a2-e0c4c503a0c8" />
 
+## 版本更新
+<img width="1902" height="448" alt="Clipboard_Screenshot_1769739939" src="https://github.com/user-attachments/assets/d6f37458-900c-4de9-8fdc-f8e6bf5c7ee5" />
+
+### 1.3.0（即将更新）
+- 支持更加丰富的富文本消息
+
+### 1.2.1
+- 解决了长时间使用会断联的问题
+- 解决了频繁重连的问题
+- 增加了大模型调用失败后的提示消息
+
+### 1.1.0
+- 解决了一些url会被拦截的问题
+- 解决了多轮消息会发送失败的问题
+- 修复了部分图片无法接受的问题
+
 
 ## 安装
 
