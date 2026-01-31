@@ -320,7 +320,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
 
         const fromAddress = event.type === "guild" ? `qqbot:channel:${event.channelId}`
                          : event.type === "group" ? `qqbot:group:${event.groupOpenid}`
-                         : `qqbot:${event.senderId}`;
+                         : `qqbot:c2c:${event.senderId}`;
         const toAddress = fromAddress;
 
         const ctxPayload = pluginRuntime.channel.reply.finalizeInboundContext({
@@ -344,6 +344,9 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
           QQGuildId: event.guildId,
           QQGroupOpenid: event.groupOpenid,
         });
+
+        // 打印 ctxPayload 详细信息（便于调试）
+        log?.info(`[qqbot:${account.accountId}] ctxPayload: From=${fromAddress}, To=${toAddress}, SessionKey=${route.sessionKey}, AccountId=${route.accountId}, ChatType=${isGroup ? "group" : "direct"}, SenderId=${event.senderId}, MessageSid=${event.messageId}, BodyLen=${body?.length ?? 0}`);
 
         // 发送消息的辅助函数，带 token 过期重试
         const sendWithTokenRetry = async (sendFn: (token: string) => Promise<unknown>) => {
@@ -386,7 +389,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
 
           // 追踪是否有响应
           let hasResponse = false;
-          const responseTimeout = 30000; // 30秒超时
+          const responseTimeout = 300000; // 30秒超时
           let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
           const timeoutPromise = new Promise<void>((_, reject) => {
@@ -397,20 +400,26 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
             }, responseTimeout);
           });
 
+          // 调用 dispatchReply
+          log?.info(`[qqbot:${account.accountId}] dispatchReply: agentId=${route.agentId}, prefix=${messagesConfig.responsePrefix ?? "(none)"}`);
+
           const dispatchPromise = pluginRuntime.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
             ctx: ctxPayload,
             cfg,
             dispatcherOptions: {
               responsePrefix: messagesConfig.responsePrefix,
-              deliver: async (payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string }) => {
+              deliver: async (payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string }, info: { kind: string }) => {
                 hasResponse = true;
                 if (timeoutId) {
                   clearTimeout(timeoutId);
                   timeoutId = null;
                 }
 
-                log?.info(`[qqbot:${account.accountId}] deliver called, payload keys: ${Object.keys(payload).join(", ")}`);
-
+                log?.info(`[qqbot:${account.accountId}] deliver(${info.kind}): textLen=${payload.text?.length ?? 0}, mediaUrls=${payload.mediaUrls?.length ?? 0}, mediaUrl=${payload.mediaUrl ? "yes" : "no"}`);
+                if (payload.text) {
+                  log?.info(`[qqbot:${account.accountId}] text preview: ${payload.text.slice(0, 150).replace(/\n/g, "\\n")}...`);
+                }
+                
                 let replyText = payload.text ?? "";
                 
                 // 收集所有图片路径
@@ -535,15 +544,16 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
                     try {
                       await sendWithTokenRetry(async (token) => {
                         if (event.type === "c2c") {
+                          log?.info(`[qqbot:${account.accountId}] sendC2CImage -> ${event.senderId}`);
                           await sendC2CImageMessage(token, event.senderId, imageUrl, event.messageId);
                         } else if (event.type === "group" && event.groupOpenid) {
+                          log?.info(`[qqbot:${account.accountId}] sendGroupImage -> ${event.groupOpenid}`);
                           await sendGroupImageMessage(token, event.groupOpenid, imageUrl, event.messageId);
                         }
                         // 频道消息暂不支持富媒体，跳过图片
                       });
-                      log?.info(`[qqbot:${account.accountId}] Sent image: ${imageUrl.slice(0, 50)}...`);
                     } catch (imgErr) {
-                      log?.error(`[qqbot:${account.accountId}] Failed to send image: ${imgErr}`);
+                      log?.error(`[qqbot:${account.accountId}] Image send failed: ${imgErr}`);
                       // 图片发送失败时，显示错误信息而不是 URL
                       const errMsg = String(imgErr).slice(0, 200);
                       replyText = `[图片发送失败: ${errMsg}]\n${replyText}`;
@@ -554,14 +564,16 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
                   if (replyText.trim()) {
                     await sendWithTokenRetry(async (token) => {
                       if (event.type === "c2c") {
+                        log?.info(`[qqbot:${account.accountId}] sendC2CText -> ${event.senderId}, len=${replyText.length}`);
                         await sendC2CMessage(token, event.senderId, replyText, event.messageId);
                       } else if (event.type === "group" && event.groupOpenid) {
+                        log?.info(`[qqbot:${account.accountId}] sendGroupText -> ${event.groupOpenid}, len=${replyText.length}`);
                         await sendGroupMessage(token, event.groupOpenid, replyText, event.messageId);
                       } else if (event.channelId) {
+                        log?.info(`[qqbot:${account.accountId}] sendChannelText -> ${event.channelId}, len=${replyText.length}`);
                         await sendChannelMessage(token, event.channelId, replyText, event.messageId);
                       }
                     });
-                    log?.info(`[qqbot:${account.accountId}] Sent text reply`);
                   }
 
                   pluginRuntime.channel.activity.record({
