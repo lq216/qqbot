@@ -1,10 +1,11 @@
 /**
- * QQ Bot 消息发送模块（支持流式消息）
+ * QQ Bot 消息发送模块
  */
 
-import type { ResolvedQQBotAccount, StreamContext } from "./types.js";
-import { StreamState } from "./types.js";
-import { 
+import * as fs from "fs";
+import * as path from "path";
+import type { ResolvedQQBotAccount } from "./types.js";
+import {
   getAccessToken, 
   sendC2CMessage, 
   sendChannelMessage, 
@@ -13,7 +14,6 @@ import {
   sendProactiveGroupMessage,
   sendC2CImageMessage,
   sendGroupImageMessage,
-  type StreamMessageResponse,
 } from "./api.js";
 
 // ============ 消息回复限流器 ============
@@ -160,155 +160,6 @@ export interface OutboundResult {
   messageId?: string;
   timestamp?: string | number;
   error?: string;
-  /** 流式消息ID，用于后续分片 */
-  streamId?: string;
-}
-
-/**
- * 流式消息发送器
- * 用于管理一个完整的流式消息会话
- */
-export class StreamSender {
-  private context: StreamContext;
-  private accessToken: string | null = null;
-  private targetType: "c2c" | "group" | "channel";
-  private targetId: string;
-  private msgId?: string;
-  private account: ResolvedQQBotAccount;
-
-  constructor(
-    account: ResolvedQQBotAccount,
-    to: string,
-    replyToId?: string | null
-  ) {
-    this.account = account;
-    this.msgId = replyToId ?? undefined;
-    this.context = {
-      index: 0,
-      streamId: "",
-      ended: false,
-    };
-
-    // 解析目标地址
-    const target = parseTarget(to);
-    this.targetType = target.type;
-    this.targetId = target.id;
-  }
-
-  /**
-   * 发送流式消息分片
-   * @param text 分片内容
-   * @param isEnd 是否是最后一个分片
-   * @returns 发送结果
-   */
-  async send(text: string, isEnd = false): Promise<OutboundResult> {
-    if (this.context.ended) {
-      return { channel: "qqbot", error: "Stream already ended" };
-    }
-
-    if (!this.account.appId || !this.account.clientSecret) {
-      return { channel: "qqbot", error: "QQBot not configured (missing appId or clientSecret)" };
-    }
-
-    try {
-      // 获取或复用 accessToken
-      if (!this.accessToken) {
-        this.accessToken = await getAccessToken(this.account.appId, this.account.clientSecret);
-      }
-
-      const streamConfig = {
-        state: isEnd ? StreamState.END : StreamState.STREAMING,
-        index: this.context.index,
-        id: this.context.streamId,
-      };
-
-      let result: StreamMessageResponse;
-
-      if (this.targetType === "c2c") {
-        result = await sendC2CMessage(
-          this.accessToken,
-          this.targetId,
-          text,
-          this.msgId,
-          streamConfig
-        );
-      } else if (this.targetType === "group") {
-        // 群聊不支持流式，直接发送普通消息
-        const groupResult = await sendGroupMessage(
-          this.accessToken,
-          this.targetId,
-          text,
-          this.msgId
-          // 不传 streamConfig
-        );
-        return { 
-          channel: "qqbot", 
-          messageId: groupResult.id, 
-          timestamp: groupResult.timestamp 
-        };
-      } else {
-        // 频道不支持流式，直接发送普通消息
-        const channelResult = await sendChannelMessage(
-          this.accessToken,
-          this.targetId,
-          text,
-          this.msgId
-        );
-        return { 
-          channel: "qqbot", 
-          messageId: channelResult.id, 
-          timestamp: channelResult.timestamp 
-        };
-      }
-
-      // 更新流式上下文
-      // 第一次发送后，服务端会返回 stream_id（或在 id 字段中），后续需要带上
-      if (this.context.index === 0 && result.stream_id) {
-        this.context.streamId = result.stream_id;
-      } else if (this.context.index === 0 && result.id && !this.context.streamId) {
-        // 某些情况下 stream_id 可能在 id 字段返回
-        this.context.streamId = result.id;
-      }
-
-      this.context.index++;
-
-      if (isEnd) {
-        this.context.ended = true;
-      }
-
-      return { 
-        channel: "qqbot", 
-        messageId: result.id, 
-        timestamp: result.timestamp,
-        streamId: this.context.streamId,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { channel: "qqbot", error: message };
-    }
-  }
-
-  /**
-   * 结束流式消息
-   * @param text 最后一个分片的内容（可选）
-   */
-  async end(text?: string): Promise<OutboundResult> {
-    return this.send(text ?? "", true);
-  }
-
-  /**
-   * 获取当前流式上下文状态
-   */
-  getContext(): Readonly<StreamContext> {
-    return { ...this.context };
-  }
-
-  /**
-   * 是否已结束
-   */
-  isEnded(): boolean {
-    return this.context.ended;
-  }
 }
 
 /**
@@ -441,69 +292,6 @@ export async function sendText(ctx: OutboundContext): Promise<OutboundResult> {
 }
 
 /**
- * 流式发送文本消息
- * 
- * @param ctx 发送上下文
- * @param textGenerator 异步文本生成器，每次 yield 一个分片
- * @returns 最终发送结果
- * 
- * @example
- * ```typescript
- * async function* generateText() {
- *   yield "Hello, ";
- *   yield "this is ";
- *   yield "a streaming ";
- *   yield "message!";
- * }
- * 
- * const result = await sendTextStream(ctx, generateText());
- * ```
- */
-export async function sendTextStream(
-  ctx: OutboundContext,
-  textGenerator: AsyncIterable<string>
-): Promise<OutboundResult> {
-  const { to, replyToId, account } = ctx;
-  
-  const sender = new StreamSender(account, to, replyToId);
-  let lastResult: OutboundResult = { channel: "qqbot" };
-  let buffer = "";
-
-  try {
-    for await (const chunk of textGenerator) {
-      buffer += chunk;
-      
-      // 发送当前分片
-      lastResult = await sender.send(buffer, false);
-      
-      if (lastResult.error) {
-        return lastResult;
-      }
-    }
-
-    // 发送结束标记
-    lastResult = await sender.end(buffer);
-    
-    return lastResult;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { channel: "qqbot", error: message };
-  }
-}
-
-/**
- * 创建流式消息发送器
- * 提供更细粒度的控制
- */
-export function createStreamSender(
-  account: ResolvedQQBotAccount,
-  to: string,
-  replyToId?: string | null
-): StreamSender {
-  return new StreamSender(account, to, replyToId);
-}
-
-/**
  * 主动发送消息（不需要 replyToId，有配额限制：每月 4 条/用户/群）
  * 
  * @param account - 账户配置
@@ -543,11 +331,17 @@ export async function sendProactiveMessage(
 /**
  * 发送富媒体消息（图片）
  * 
+ * 支持以下 mediaUrl 格式：
+ * - 公网 URL: https://example.com/image.png
+ * - Base64 Data URL: data:image/png;base64,xxxxx
+ * - 本地文件路径: /path/to/image.png（自动读取并转换为 Base64）
+ * 
  * @param ctx - 发送上下文，包含 mediaUrl
  * @returns 发送结果
  * 
  * @example
  * ```typescript
+ * // 发送网络图片
  * const result = await sendMedia({
  *   to: "group:xxx",
  *   text: "这是图片说明",
@@ -555,10 +349,29 @@ export async function sendProactiveMessage(
  *   account,
  *   replyToId: msgId,
  * });
+ * 
+ * // 发送 Base64 图片
+ * const result = await sendMedia({
+ *   to: "group:xxx",
+ *   text: "这是图片说明",
+ *   mediaUrl: "data:image/png;base64,iVBORw0KGgo...",
+ *   account,
+ *   replyToId: msgId,
+ * });
+ * 
+ * // 发送本地文件（自动读取并转换为 Base64）
+ * const result = await sendMedia({
+ *   to: "group:xxx",
+ *   text: "这是图片说明",
+ *   mediaUrl: "/tmp/generated-chart.png",
+ *   account,
+ *   replyToId: msgId,
+ * });
  * ```
  */
 export async function sendMedia(ctx: MediaOutboundContext): Promise<OutboundResult> {
-  const { to, text, mediaUrl, replyToId, account } = ctx;
+  const { to, text, replyToId, account } = ctx;
+  const { mediaUrl } = ctx;
 
   if (!account.appId || !account.clientSecret) {
     return { channel: "qqbot", error: "QQBot not configured (missing appId or clientSecret)" };
@@ -568,17 +381,87 @@ export async function sendMedia(ctx: MediaOutboundContext): Promise<OutboundResu
     return { channel: "qqbot", error: "mediaUrl is required for sendMedia" };
   }
 
+  // 验证 mediaUrl 格式：支持公网 URL、Base64 Data URL 或本地文件路径
+  const isHttpUrl = mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://");
+  const isDataUrl = mediaUrl.startsWith("data:");
+  const isLocalPath = mediaUrl.startsWith("/") || 
+                      /^[a-zA-Z]:[\\/]/.test(mediaUrl) ||
+                      mediaUrl.startsWith("./") ||
+                      mediaUrl.startsWith("../");
+  
+  // 处理本地文件路径：读取文件并转换为 Base64 Data URL
+  let processedMediaUrl = mediaUrl;
+  
+  if (isLocalPath) {
+    console.log(`[qqbot] sendMedia: local file path detected: ${mediaUrl}`);
+    
+    try {
+      // 检查文件是否存在
+      if (!fs.existsSync(mediaUrl)) {
+        return { 
+          channel: "qqbot", 
+          error: `本地文件不存在: ${mediaUrl}` 
+        };
+      }
+      
+      // 读取文件内容
+      const fileBuffer = fs.readFileSync(mediaUrl);
+      const base64Data = fileBuffer.toString("base64");
+      
+      // 根据文件扩展名确定 MIME 类型
+      const ext = path.extname(mediaUrl).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+      };
+      
+      const mimeType = mimeTypes[ext];
+      if (!mimeType) {
+        return { 
+          channel: "qqbot", 
+          error: `不支持的图片格式: ${ext}。支持的格式: ${Object.keys(mimeTypes).join(", ")}` 
+        };
+      }
+      
+      // 构造 Data URL
+      processedMediaUrl = `data:${mimeType};base64,${base64Data}`;
+      console.log(`[qqbot] sendMedia: local file converted to Base64 (size: ${fileBuffer.length} bytes, type: ${mimeType})`);
+      
+    } catch (readErr) {
+      const errMsg = readErr instanceof Error ? readErr.message : String(readErr);
+      console.error(`[qqbot] sendMedia: failed to read local file: ${errMsg}`);
+      return { 
+        channel: "qqbot", 
+        error: `读取本地文件失败: ${errMsg}` 
+      };
+    }
+  } else if (!isHttpUrl && !isDataUrl) {
+    console.log(`[qqbot] sendMedia: unsupported media format: ${mediaUrl.slice(0, 50)}`);
+    return { 
+      channel: "qqbot", 
+      error: `不支持的图片格式: ${mediaUrl.slice(0, 50)}...。支持的格式: 公网 URL (http/https)、Base64 Data URL (data:image/...) 或本地文件路径。` 
+    };
+  } else if (isDataUrl) {
+    console.log(`[qqbot] sendMedia: sending Base64 image (length: ${mediaUrl.length})`);
+  } else {
+    console.log(`[qqbot] sendMedia: sending image URL: ${mediaUrl.slice(0, 80)}...`);
+  }
+
   try {
     const accessToken = await getAccessToken(account.appId, account.clientSecret);
     const target = parseTarget(to);
 
-    // 先发送图片
+    // 先发送图片（使用处理后的 URL，可能是 Base64 Data URL）
     let imageResult: { id: string; timestamp: number | string };
     if (target.type === "c2c") {
       imageResult = await sendC2CImageMessage(
         accessToken,
         target.id,
-        mediaUrl,
+        processedMediaUrl,
         replyToId ?? undefined,
         undefined // content 参数，图片消息不支持同时带文本
       );
@@ -586,13 +469,14 @@ export async function sendMedia(ctx: MediaOutboundContext): Promise<OutboundResu
       imageResult = await sendGroupImageMessage(
         accessToken,
         target.id,
-        mediaUrl,
+        processedMediaUrl,
         replyToId ?? undefined,
         undefined
       );
     } else {
-      // 频道暂不支持富媒体消息，只发送文本 + URL
-      const textWithUrl = text ? `${text}\n${mediaUrl}` : mediaUrl;
+      // 频道暂不支持富媒体消息，只发送文本 + URL（本地文件路径无法在频道展示）
+      const displayUrl = isLocalPath ? "[本地文件]" : mediaUrl;
+      const textWithUrl = text ? `${text}\n${displayUrl}` : displayUrl;
       const result = await sendChannelMessage(accessToken, target.id, textWithUrl, replyToId ?? undefined);
       return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
     }

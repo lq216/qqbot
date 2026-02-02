@@ -1,8 +1,6 @@
 /**
- * QQ Bot API 鉴权和请求封装（支持流式消息）
+ * QQ Bot API 鉴权和请求封装
  */
-
-import { StreamState, type StreamConfig } from "./types.js";
 
 const API_BASE = "https://api.sgroup.qq.com";
 const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
@@ -12,10 +10,10 @@ let currentMarkdownSupport = false;
 
 /**
  * 初始化 API 配置
- * @param options.markdownSupport - 是否支持 markdown 消息
+ * @param options.markdownSupport - 是否支持 markdown 消息（默认 false，需要机器人具备该权限才能启用）
  */
 export function initApiConfig(options: { markdownSupport?: boolean }): void {
-  currentMarkdownSupport = options.markdownSupport === true; // 默认为 false
+  currentMarkdownSupport = options.markdownSupport === true; // 默认为 false，需要机器人具备 markdown 消息权限才能启用
 }
 
 /**
@@ -245,45 +243,35 @@ export async function getGatewayUrl(accessToken: string): Promise<string> {
   return data.url;
 }
 
-// ============ 流式消息发送接口 ============
+// ============ 消息发送接口 ============
 
 /**
- * 流式消息响应
+ * 消息响应
  */
-export interface StreamMessageResponse {
+export interface MessageResponse {
   id: string;
   timestamp: number | string;
-  /** 流式消息ID，用于后续分片 */
-  stream_id?: string;
 }
 
 /**
- * 构建流式消息体
+ * 构建消息体
  * 根据 markdownSupport 配置决定消息格式：
  * - markdown 模式: { markdown: { content }, msg_type: 2 }
  * - 纯文本模式: { content, msg_type: 0 }
  */
-function buildStreamBody(
+function buildMessageBody(
   content: string,
   msgId: string | undefined,
-  msgSeq: number,
-  stream?: StreamConfig
+  msgSeq: number
 ): Record<string, unknown> {
-  // 流式 markdown 消息要求每个分片内容必须以换行符结尾
-  // QQ API 错误码 40034017: "流式消息md分片需要\n结束"
-  let finalContent = content;
-  if (stream && currentMarkdownSupport && content && !content.endsWith("\n")) {
-    finalContent = content + "\n";
-  }
-
   const body: Record<string, unknown> = currentMarkdownSupport
     ? {
-        markdown: { content: finalContent },
+        markdown: { content },
         msg_type: 2,
         msg_seq: msgSeq,
       }
     : {
-        content: finalContent,
+        content,
         msg_type: 0,
         msg_seq: msgSeq,
       };
@@ -292,29 +280,20 @@ function buildStreamBody(
     body.msg_id = msgId;
   }
 
-  if (stream) {
-    body.stream = {
-      state: stream.state,
-      index: stream.index,
-      ...(stream.id ? { id: stream.id } : {}),
-    };
-  }
-
   return body;
 }
 
 /**
- * 发送 C2C 单聊消息（支持流式）
+ * 发送 C2C 单聊消息
  */
 export async function sendC2CMessage(
   accessToken: string,
   openid: string,
   content: string,
-  msgId?: string,
-  stream?: StreamConfig
-): Promise<StreamMessageResponse> {
+  msgId?: string
+): Promise<MessageResponse> {
   const msgSeq = msgId ? getNextMsgSeq(msgId) : 1;
-  const body = buildStreamBody(content, msgId, msgSeq, stream);
+  const body = buildMessageBody(content, msgId, msgSeq);
   
   return apiRequest(accessToken, "POST", `/v2/users/${openid}/messages`, body);
 }
@@ -358,17 +337,16 @@ export async function sendChannelMessage(
 }
 
 /**
- * 发送群聊消息（支持流式）
+ * 发送群聊消息
  */
 export async function sendGroupMessage(
   accessToken: string,
   groupOpenid: string,
   content: string,
-  msgId?: string,
-  stream?: StreamConfig
-): Promise<StreamMessageResponse> {
+  msgId?: string
+): Promise<MessageResponse> {
   const msgSeq = msgId ? getNextMsgSeq(msgId) : 1;
-  const body = buildStreamBody(content, msgId, msgSeq, stream);
+  const body = buildMessageBody(content, msgId, msgSeq);
   
   return apiRequest(accessToken, "POST", `/v2/groups/${groupOpenid}/messages`, body);
 }
@@ -458,36 +436,64 @@ export interface UploadMediaResponse {
 
 /**
  * 上传富媒体文件到 C2C 单聊
+ * @param url - 公网可访问的图片 URL（与 fileData 二选一）
+ * @param fileData - Base64 编码的文件内容（与 url 二选一）
  */
 export async function uploadC2CMedia(
   accessToken: string,
   openid: string,
   fileType: MediaFileType,
-  url: string,
+  url?: string,
+  fileData?: string,
   srvSendMsg = false
 ): Promise<UploadMediaResponse> {
-  return apiRequest(accessToken, "POST", `/v2/users/${openid}/files`, {
+  if (!url && !fileData) {
+    throw new Error("uploadC2CMedia: url or fileData is required");
+  }
+  
+  const body: Record<string, unknown> = {
     file_type: fileType,
-    url,
     srv_send_msg: srvSendMsg,
-  });
+  };
+  
+  if (url) {
+    body.url = url;
+  } else if (fileData) {
+    body.file_data = fileData;
+  }
+  
+  return apiRequest(accessToken, "POST", `/v2/users/${openid}/files`, body);
 }
 
 /**
  * 上传富媒体文件到群聊
+ * @param url - 公网可访问的图片 URL（与 fileData 二选一）
+ * @param fileData - Base64 编码的文件内容（与 url 二选一）
  */
 export async function uploadGroupMedia(
   accessToken: string,
   groupOpenid: string,
   fileType: MediaFileType,
-  url: string,
+  url?: string,
+  fileData?: string,
   srvSendMsg = false
 ): Promise<UploadMediaResponse> {
-  return apiRequest(accessToken, "POST", `/v2/groups/${groupOpenid}/files`, {
+  if (!url && !fileData) {
+    throw new Error("uploadGroupMedia: url or fileData is required");
+  }
+  
+  const body: Record<string, unknown> = {
     file_type: fileType,
-    url,
     srv_send_msg: srvSendMsg,
-  });
+  };
+  
+  if (url) {
+    body.url = url;
+  } else if (fileData) {
+    body.file_data = fileData;
+  }
+  
+  return apiRequest(accessToken, "POST", `/v2/groups/${groupOpenid}/files`, body);
 }
 
 /**
@@ -532,6 +538,9 @@ export async function sendGroupMediaMessage(
 
 /**
  * 发送带图片的 C2C 单聊消息（封装上传+发送）
+ * @param imageUrl - 图片来源，支持：
+ *   - 公网 URL: https://example.com/image.png
+ *   - Base64 Data URL: data:image/png;base64,xxxxx
  */
 export async function sendC2CImageMessage(
   accessToken: string,
@@ -540,14 +549,32 @@ export async function sendC2CImageMessage(
   msgId?: string,
   content?: string
 ): Promise<{ id: string; timestamp: number }> {
-  // 先上传图片获取 file_info
-  const uploadResult = await uploadC2CMedia(accessToken, openid, MediaFileType.IMAGE, imageUrl, false);
-  // 再发送富媒体消息
+  let uploadResult: UploadMediaResponse;
+  
+  // 检查是否是 Base64 Data URL
+  if (imageUrl.startsWith("data:")) {
+    // 解析 Base64 Data URL: data:image/png;base64,xxxxx
+    const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) {
+      throw new Error("Invalid Base64 Data URL format");
+    }
+    const base64Data = matches[2];
+    // 使用 file_data 上传
+    uploadResult = await uploadC2CMedia(accessToken, openid, MediaFileType.IMAGE, undefined, base64Data, false);
+  } else {
+    // 公网 URL，使用 url 参数上传
+    uploadResult = await uploadC2CMedia(accessToken, openid, MediaFileType.IMAGE, imageUrl, undefined, false);
+  }
+  
+  // 发送富媒体消息
   return sendC2CMediaMessage(accessToken, openid, uploadResult.file_info, msgId, content);
 }
 
 /**
  * 发送带图片的群聊消息（封装上传+发送）
+ * @param imageUrl - 图片来源，支持：
+ *   - 公网 URL: https://example.com/image.png
+ *   - Base64 Data URL: data:image/png;base64,xxxxx
  */
 export async function sendGroupImageMessage(
   accessToken: string,
@@ -556,9 +583,24 @@ export async function sendGroupImageMessage(
   msgId?: string,
   content?: string
 ): Promise<{ id: string; timestamp: string }> {
-  // 先上传图片获取 file_info
-  const uploadResult = await uploadGroupMedia(accessToken, groupOpenid, MediaFileType.IMAGE, imageUrl, false);
-  // 再发送富媒体消息
+  let uploadResult: UploadMediaResponse;
+  
+  // 检查是否是 Base64 Data URL
+  if (imageUrl.startsWith("data:")) {
+    // 解析 Base64 Data URL: data:image/png;base64,xxxxx
+    const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) {
+      throw new Error("Invalid Base64 Data URL format");
+    }
+    const base64Data = matches[2];
+    // 使用 file_data 上传
+    uploadResult = await uploadGroupMedia(accessToken, groupOpenid, MediaFileType.IMAGE, undefined, base64Data, false);
+  } else {
+    // 公网 URL，使用 url 参数上传
+    uploadResult = await uploadGroupMedia(accessToken, groupOpenid, MediaFileType.IMAGE, imageUrl, undefined, false);
+  }
+  
+  // 发送富媒体消息
   return sendGroupMediaMessage(accessToken, groupOpenid, uploadResult.file_info, msgId, content);
 }
 

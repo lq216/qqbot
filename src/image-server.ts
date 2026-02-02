@@ -386,6 +386,34 @@ export function isImageServerRunning(): boolean {
 }
 
 /**
+ * 确保图床服务器正在运行
+ * 如果未运行，则自动启动
+ * @param publicBaseUrl 公网访问的基础 URL（如 http://your-server:18765）
+ * @returns 基础 URL，启动失败返回 null
+ */
+export async function ensureImageServer(publicBaseUrl?: string): Promise<string | null> {
+  if (isImageServerRunning()) {
+    return publicBaseUrl || currentConfig.baseUrl || `http://0.0.0.0:${currentConfig.port}`;
+  }
+
+  try {
+    const config: Partial<ImageServerConfig> = {
+      port: DEFAULT_CONFIG.port,
+      storageDir: DEFAULT_CONFIG.storageDir,
+      // 使用用户配置的公网地址
+      baseUrl: publicBaseUrl || `http://0.0.0.0:${DEFAULT_CONFIG.port}`,
+      ttlSeconds: 3600, // 1 小时过期
+    };
+    await startImageServer(config);
+    console.log(`[image-server] Auto-started on port ${config.port}, baseUrl: ${config.baseUrl}`);
+    return config.baseUrl!;
+  } catch (err) {
+    console.error(`[image-server] Failed to auto-start: ${err}`);
+    return null;
+  }
+}
+
+/**
  * 下载远程文件并保存到本地
  * @param url 远程文件 URL
  * @param destDir 目标目录
