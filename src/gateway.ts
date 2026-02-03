@@ -695,106 +695,121 @@ openclaw cron add \\
                 if (qqimgMatches.length > 0) {
                   log?.info(`[qqbot:${account.accountId}] Detected ${qqimgMatches.length} <qqimg> tag(s)`);
                   
-                  // 提取标签外的文本（作为描述发送）
-                  let textWithoutTags = replyText;
-                  const imagePaths: string[] = [];
+                  // 构建发送队列：根据内容在原文中的实际位置顺序发送
+                  // type: 'text' | 'image', content: 文本内容或图片路径
+                  const sendQueue: Array<{ type: "text" | "image"; content: string }> = [];
                   
-                  for (const match of qqimgMatches) {
-                    const fullMatch = match[0];
-                    const imagePath = match[1]?.trim();
+                  let lastIndex = 0;
+                  // 使用新的正则来获取带索引的匹配结果
+                  const qqimgRegexWithIndex = /<qqimg>([^<>]+)<\/qqimg>/gi;
+                  let match;
+                  
+                  while ((match = qqimgRegexWithIndex.exec(replyText)) !== null) {
+                    // 添加标签前的文本
+                    const textBefore = replyText.slice(lastIndex, match.index).replace(/\n{3,}/g, "\n\n").trim();
+                    if (textBefore) {
+                      sendQueue.push({ type: "text", content: filterInternalMarkers(textBefore) });
+                    }
                     
+                    // 添加图片
+                    const imagePath = match[1]?.trim();
                     if (imagePath) {
-                      imagePaths.push(imagePath);
+                      sendQueue.push({ type: "image", content: imagePath });
                       log?.info(`[qqbot:${account.accountId}] Found image path in <qqimg>: ${imagePath}`);
                     }
                     
-                    // 从文本中移除标签
-                    textWithoutTags = textWithoutTags.replace(fullMatch, "");
+                    lastIndex = match.index + match[0].length;
                   }
                   
-                  // 清理多余空行
-                  textWithoutTags = textWithoutTags.replace(/\n{3,}/g, "\n\n").trim();
+                  // 添加最后一个标签后的文本
+                  const textAfter = replyText.slice(lastIndex).replace(/\n{3,}/g, "\n\n").trim();
+                  if (textAfter) {
+                    sendQueue.push({ type: "text", content: filterInternalMarkers(textAfter) });
+                  }
                   
-                  // 发送图片
-                  for (const imagePath of imagePaths) {
-                    try {
-                      let imageUrl = imagePath;
-                      
-                      // 判断是本地文件还是 URL
-                      const isLocalPath = imagePath.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(imagePath);
-                      const isHttpUrl = imagePath.startsWith("http://") || imagePath.startsWith("https://");
-                      
-                      if (isLocalPath) {
-                        // 本地文件：转换为 Base64 Data URL
-                        if (!fs.existsSync(imagePath)) {
-                          log?.error(`[qqbot:${account.accountId}] Image file not found: ${imagePath}`);
-                          await sendErrorMessage(`图片文件不存在: ${imagePath}`);
+                  log?.info(`[qqbot:${account.accountId}] Send queue: ${sendQueue.map(item => item.type).join(" -> ")}`);
+                  
+                  // 按顺序发送
+                  for (const item of sendQueue) {
+                    if (item.type === "text") {
+                      // 发送文本
+                      try {
+                        await sendWithTokenRetry(async (token) => {
+                          if (event.type === "c2c") {
+                            await sendC2CMessage(token, event.senderId, item.content, event.messageId);
+                          } else if (event.type === "group" && event.groupOpenid) {
+                            await sendGroupMessage(token, event.groupOpenid, item.content, event.messageId);
+                          } else if (event.channelId) {
+                            await sendChannelMessage(token, event.channelId, item.content, event.messageId);
+                          }
+                        });
+                        log?.info(`[qqbot:${account.accountId}] Sent text: ${item.content.slice(0, 50)}...`);
+                      } catch (err) {
+                        log?.error(`[qqbot:${account.accountId}] Failed to send text: ${err}`);
+                      }
+                    } else if (item.type === "image") {
+                      // 发送图片
+                      const imagePath = item.content;
+                      try {
+                        let imageUrl = imagePath;
+                        
+                        // 判断是本地文件还是 URL
+                        const isLocalPath = imagePath.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(imagePath);
+                        const isHttpUrl = imagePath.startsWith("http://") || imagePath.startsWith("https://");
+                        
+                        if (isLocalPath) {
+                          // 本地文件：转换为 Base64 Data URL
+                          if (!fs.existsSync(imagePath)) {
+                            log?.error(`[qqbot:${account.accountId}] Image file not found: ${imagePath}`);
+                            await sendErrorMessage(`图片文件不存在: ${imagePath}`);
+                            continue;
+                          }
+                          
+                          const fileBuffer = fs.readFileSync(imagePath);
+                          const base64Data = fileBuffer.toString("base64");
+                          const ext = path.extname(imagePath).toLowerCase();
+                          const mimeTypes: Record<string, string> = {
+                            ".jpg": "image/jpeg",
+                            ".jpeg": "image/jpeg",
+                            ".png": "image/png",
+                            ".gif": "image/gif",
+                            ".webp": "image/webp",
+                            ".bmp": "image/bmp",
+                          };
+                          const mimeType = mimeTypes[ext];
+                          if (!mimeType) {
+                            log?.error(`[qqbot:${account.accountId}] Unsupported image format: ${ext}`);
+                            await sendErrorMessage(`不支持的图片格式: ${ext}`);
+                            continue;
+                          }
+                          imageUrl = `data:${mimeType};base64,${base64Data}`;
+                          log?.info(`[qqbot:${account.accountId}] Converted local image to Base64 (size: ${fileBuffer.length} bytes)`);
+                        } else if (!isHttpUrl) {
+                          log?.error(`[qqbot:${account.accountId}] Invalid image path (not local or URL): ${imagePath}`);
                           continue;
                         }
                         
-                        const fileBuffer = fs.readFileSync(imagePath);
-                        const base64Data = fileBuffer.toString("base64");
-                        const ext = path.extname(imagePath).toLowerCase();
-                        const mimeTypes: Record<string, string> = {
-                          ".jpg": "image/jpeg",
-                          ".jpeg": "image/jpeg",
-                          ".png": "image/png",
-                          ".gif": "image/gif",
-                          ".webp": "image/webp",
-                          ".bmp": "image/bmp",
-                        };
-                        const mimeType = mimeTypes[ext];
-                        if (!mimeType) {
-                          log?.error(`[qqbot:${account.accountId}] Unsupported image format: ${ext}`);
-                          await sendErrorMessage(`不支持的图片格式: ${ext}`);
-                          continue;
-                        }
-                        imageUrl = `data:${mimeType};base64,${base64Data}`;
-                        log?.info(`[qqbot:${account.accountId}] Converted local image to Base64 (size: ${fileBuffer.length} bytes)`);
-                      } else if (!isHttpUrl) {
-                        log?.error(`[qqbot:${account.accountId}] Invalid image path (not local or URL): ${imagePath}`);
-                        continue;
-                      }
-                      
-                      // 发送图片
-                      await sendWithTokenRetry(async (token) => {
-                        if (event.type === "c2c") {
-                          await sendC2CImageMessage(token, event.senderId, imageUrl, event.messageId);
-                        } else if (event.type === "group" && event.groupOpenid) {
-                          await sendGroupImageMessage(token, event.groupOpenid, imageUrl, event.messageId);
-                        } else if (event.channelId) {
-                          // 频道使用 Markdown 格式（如果是公网 URL）
-                          if (isHttpUrl) {
-                            await sendChannelMessage(token, event.channelId, `![](${imagePath})`, event.messageId);
-                          } else {
-                            // 频道不支持富媒体 Base64
-                            log?.info(`[qqbot:${account.accountId}] Channel does not support rich media for local images`);
+                        // 发送图片
+                        await sendWithTokenRetry(async (token) => {
+                          if (event.type === "c2c") {
+                            await sendC2CImageMessage(token, event.senderId, imageUrl, event.messageId);
+                          } else if (event.type === "group" && event.groupOpenid) {
+                            await sendGroupImageMessage(token, event.groupOpenid, imageUrl, event.messageId);
+                          } else if (event.channelId) {
+                            // 频道使用 Markdown 格式（如果是公网 URL）
+                            if (isHttpUrl) {
+                              await sendChannelMessage(token, event.channelId, `![](${imagePath})`, event.messageId);
+                            } else {
+                              // 频道不支持富媒体 Base64
+                              log?.info(`[qqbot:${account.accountId}] Channel does not support rich media for local images`);
+                            }
                           }
-                        }
-                      });
-                      log?.info(`[qqbot:${account.accountId}] Sent image via <qqimg> tag: ${imagePath.slice(0, 60)}...`);
-                    } catch (err) {
-                      log?.error(`[qqbot:${account.accountId}] Failed to send image from <qqimg>: ${err}`);
-                      await sendErrorMessage(`发送图片失败: ${err}`);
-                    }
-                  }
-                  
-                  // 发送剩余的文本（如果有）
-                  if (textWithoutTags) {
-                    textWithoutTags = filterInternalMarkers(textWithoutTags);
-                    try {
-                      await sendWithTokenRetry(async (token) => {
-                        if (event.type === "c2c") {
-                          await sendC2CMessage(token, event.senderId, textWithoutTags, event.messageId);
-                        } else if (event.type === "group" && event.groupOpenid) {
-                          await sendGroupMessage(token, event.groupOpenid, textWithoutTags, event.messageId);
-                        } else if (event.channelId) {
-                          await sendChannelMessage(token, event.channelId, textWithoutTags, event.messageId);
-                        }
-                      });
-                      log?.info(`[qqbot:${account.accountId}] Sent caption text: ${textWithoutTags.slice(0, 50)}...`);
-                    } catch (err) {
-                      log?.error(`[qqbot:${account.accountId}] Failed to send caption text: ${err}`);
+                        });
+                        log?.info(`[qqbot:${account.accountId}] Sent image via <qqimg> tag: ${imagePath.slice(0, 60)}...`);
+                      } catch (err) {
+                        log?.error(`[qqbot:${account.accountId}] Failed to send image from <qqimg>: ${err}`);
+                        await sendErrorMessage(`发送图片失败: ${err}`);
+                      }
                     }
                   }
                   
