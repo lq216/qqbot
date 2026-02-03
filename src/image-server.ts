@@ -335,7 +335,9 @@ export function saveImage(
 
   // 返回访问 URL
   const baseUrl = currentConfig.baseUrl || `http://localhost:${currentConfig.port}`;
-  return `${baseUrl}/images/${imageId}.${ext}`;
+  const resultUrl = `${baseUrl}/images/${imageId}.${ext}`;
+  console.log(`[image-server] saveImage: generated URL: ${resultUrl} (baseUrl: ${baseUrl})`);
+  return resultUrl;
 }
 
 /**

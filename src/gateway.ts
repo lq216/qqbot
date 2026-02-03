@@ -541,6 +541,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
 
                 try {
                   // 先发送图片（如果有）
+                  log?.info(`[qqbot:${account.accountId}] imageUrls to send: ${JSON.stringify(imageUrls)}, imageServerBaseUrl: ${imageServerBaseUrl}`);
                   for (const imageUrl of imageUrls) {
                     try {
                       await sendWithTokenRetry(async (token) => {

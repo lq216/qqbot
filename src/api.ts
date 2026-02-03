@@ -390,7 +390,9 @@ export async function sendGroupImageMessage(
   content?: string
 ): Promise<{ id: string; timestamp: string }> {
   // 先上传图片获取 file_info
+  console.log(`[qqbot-api] sendGroupImageMessage: uploading image from URL: ${imageUrl}`);
   const uploadResult = await uploadGroupMedia(accessToken, groupOpenid, MediaFileType.IMAGE, imageUrl, false);
+  console.log(`[qqbot-api] sendGroupImageMessage: upload success, file_info: ${uploadResult.file_info?.slice(0, 50)}...`);
   // 再发送富媒体消息
   return sendGroupMediaMessage(accessToken, groupOpenid, uploadResult.file_info, msgId, content);
 }
