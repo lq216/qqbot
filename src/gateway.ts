@@ -1,7 +1,7 @@
 import WebSocket from "ws";
 import path from "node:path";
 import type { ResolvedQQBotAccount, WSPayload, C2CMessageEvent, GuildMessageEvent, GroupMessageEvent } from "./types.js";
-import { getAccessToken, getGatewayUrl, sendC2CMessage, sendChannelMessage, sendGroupMessage, clearTokenCache, sendC2CImageMessage, sendGroupImageMessage } from "./api.js";
+import { getAccessToken, getGatewayUrl, sendC2CMessage, sendChannelMessage, sendGroupMessage, clearTokenCache, sendC2CImageMessage, sendGroupImageMessage, sendC2CInputNotify } from "./api.js";
 import { getQQBotRuntime } from "./runtime.js";
 import { startImageServer, saveImage, saveImageFromPath, isImageServerRunning, downloadFile, type ImageServerConfig } from "./image-server.js";
 
@@ -218,6 +218,17 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
           log?.info(`[qqbot:${account.accountId}] Attachments: ${event.attachments.length}`);
         }
 
+        // 对于 C2C 消息，先发送输入状态提示用户机器人正在输入
+        if (event.type === "c2c") {
+          try {
+            const token = await getAccessToken(account.appId, account.clientSecret);
+            await sendC2CInputNotify(token, event.senderId, event.messageId, 60);
+            log?.info(`[qqbot:${account.accountId}] Sent input notify to ${event.senderId}`);
+          } catch (err) {
+            log?.error(`[qqbot:${account.accountId}] Failed to send input notify: ${err}`);
+          }
+        }
+
         pluginRuntime.channel.activity.record({
           channel: "qqbot",
           accountId: account.accountId,
@@ -242,7 +253,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
         const envelopeOptions = pluginRuntime.channel.reply.resolveEnvelopeFormatOptions(cfg);
 
         // 组装消息体，添加系统提示词
-        let builtinPrompt = "由于平台限制，你的回复中不可以包含任何URL。";
+        let builtinPrompt = "";
         
         // 只有配置了图床公网地址，才告诉 AI 可以发送图片
         if (imageServerBaseUrl) {
@@ -309,7 +320,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
 
         const fromAddress = event.type === "guild" ? `qqbot:channel:${event.channelId}`
                          : event.type === "group" ? `qqbot:group:${event.groupOpenid}`
-                         : `qqbot:${event.senderId}`;
+                         : `qqbot:c2c:${event.senderId}`;
         const toAddress = fromAddress;
 
         const ctxPayload = pluginRuntime.channel.reply.finalizeInboundContext({
@@ -333,6 +344,9 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
           QQGuildId: event.guildId,
           QQGroupOpenid: event.groupOpenid,
         });
+
+        // 打印 ctxPayload 详细信息（便于调试）
+        log?.info(`[qqbot:${account.accountId}] ctxPayload: From=${fromAddress}, To=${toAddress}, SessionKey=${route.sessionKey}, AccountId=${route.accountId}, ChatType=${isGroup ? "group" : "direct"}, SenderId=${event.senderId}, MessageSid=${event.messageId}, BodyLen=${body?.length ?? 0}`);
 
         // 发送消息的辅助函数，带 token 过期重试
         const sendWithTokenRetry = async (sendFn: (token: string) => Promise<unknown>) => {
@@ -375,7 +389,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
 
           // 追踪是否有响应
           let hasResponse = false;
-          const responseTimeout = 30000; // 30秒超时
+          const responseTimeout = 300000; // 30秒超时
           let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
           const timeoutPromise = new Promise<void>((_, reject) => {
@@ -386,20 +400,26 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
             }, responseTimeout);
           });
 
+          // 调用 dispatchReply
+          log?.info(`[qqbot:${account.accountId}] dispatchReply: agentId=${route.agentId}, prefix=${messagesConfig.responsePrefix ?? "(none)"}`);
+
           const dispatchPromise = pluginRuntime.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
             ctx: ctxPayload,
             cfg,
             dispatcherOptions: {
               responsePrefix: messagesConfig.responsePrefix,
-              deliver: async (payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string }) => {
+              deliver: async (payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string }, info: { kind: string }) => {
                 hasResponse = true;
                 if (timeoutId) {
                   clearTimeout(timeoutId);
                   timeoutId = null;
                 }
 
-                log?.info(`[qqbot:${account.accountId}] deliver called, payload keys: ${Object.keys(payload).join(", ")}`);
-
+                log?.info(`[qqbot:${account.accountId}] deliver(${info.kind}): textLen=${payload.text?.length ?? 0}, mediaUrls=${payload.mediaUrls?.length ?? 0}, mediaUrl=${payload.mediaUrl ? "yes" : "no"}`);
+                if (payload.text) {
+                  log?.info(`[qqbot:${account.accountId}] text preview: ${payload.text.slice(0, 150).replace(/\n/g, "\\n")}...`);
+                }
+                
                 let replyText = payload.text ?? "";
                 
                 // 收集所有图片路径
@@ -518,57 +538,42 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
                   }
                 }
 
-                // 从文本中移除图片 URL，避免被 QQ 拦截
-                let textWithoutImages = replyText;
-                for (const match of urlMatches) {
-                  textWithoutImages = textWithoutImages.replace(match[0], "").trim();
-                }
-
-                // 处理剩余文本中的 URL 点号（只有在没有图片的情况下才替换，避免误伤）
-                const hasImages = imageUrls.length > 0;
-                let hasReplacement = false;
-                if (!hasImages) {
-                  const originalText = textWithoutImages;
-                  textWithoutImages = textWithoutImages.replace(/([a-zA-Z0-9])\.([a-zA-Z0-9])/g, "$1_$2");
-                  hasReplacement = textWithoutImages !== originalText;
-                  if (hasReplacement && textWithoutImages.trim()) {
-                    textWithoutImages += "\n\n（由于平台限制，回复中的部分符号已被替换）";
-                  }
-                }
-
                 try {
                   // 先发送图片（如果有）
                   for (const imageUrl of imageUrls) {
                     try {
                       await sendWithTokenRetry(async (token) => {
                         if (event.type === "c2c") {
+                          log?.info(`[qqbot:${account.accountId}] sendC2CImage -> ${event.senderId}`);
                           await sendC2CImageMessage(token, event.senderId, imageUrl, event.messageId);
                         } else if (event.type === "group" && event.groupOpenid) {
+                          log?.info(`[qqbot:${account.accountId}] sendGroupImage -> ${event.groupOpenid}`);
                           await sendGroupImageMessage(token, event.groupOpenid, imageUrl, event.messageId);
                         }
                         // 频道消息暂不支持富媒体，跳过图片
                       });
-                      log?.info(`[qqbot:${account.accountId}] Sent image: ${imageUrl.slice(0, 50)}...`);
                     } catch (imgErr) {
-                      log?.error(`[qqbot:${account.accountId}] Failed to send image: ${imgErr}`);
+                      log?.error(`[qqbot:${account.accountId}] Image send failed: ${imgErr}`);
                       // 图片发送失败时，显示错误信息而不是 URL
                       const errMsg = String(imgErr).slice(0, 200);
-                      textWithoutImages = `[图片发送失败: ${errMsg}]\n${textWithoutImages}`;
+                      replyText = `[图片发送失败: ${errMsg}]\n${replyText}`;
                     }
                   }
 
                   // 再发送文本（如果有）
-                  if (textWithoutImages.trim()) {
+                  if (replyText.trim()) {
                     await sendWithTokenRetry(async (token) => {
                       if (event.type === "c2c") {
-                        await sendC2CMessage(token, event.senderId, textWithoutImages, event.messageId);
+                        log?.info(`[qqbot:${account.accountId}] sendC2CText -> ${event.senderId}, len=${replyText.length}`);
+                        await sendC2CMessage(token, event.senderId, replyText, event.messageId);
                       } else if (event.type === "group" && event.groupOpenid) {
-                        await sendGroupMessage(token, event.groupOpenid, textWithoutImages, event.messageId);
+                        log?.info(`[qqbot:${account.accountId}] sendGroupText -> ${event.groupOpenid}, len=${replyText.length}`);
+                        await sendGroupMessage(token, event.groupOpenid, replyText, event.messageId);
                       } else if (event.channelId) {
-                        await sendChannelMessage(token, event.channelId, textWithoutImages, event.messageId);
+                        log?.info(`[qqbot:${account.accountId}] sendChannelText -> ${event.channelId}, len=${replyText.length}`);
+                        await sendChannelMessage(token, event.channelId, replyText, event.messageId);
                       }
                     });
-                    log?.info(`[qqbot:${account.accountId}] Sent text reply`);
                   }
 
                   pluginRuntime.channel.activity.record({

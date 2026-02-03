@@ -26,31 +26,37 @@ export interface OutboundResult {
 /**
  * 解析目标地址
  * 格式：
- *   - openid (32位十六进制) -> C2C 单聊
+ *   - c2c:xxx -> C2C 单聊
  *   - group:xxx -> 群聊
  *   - channel:xxx -> 频道
- *   - 纯数字 -> 频道
+ *   - 无前缀 -> 默认当作 C2C 单聊
  */
 function parseTarget(to: string): { type: "c2c" | "group" | "channel"; id: string } {
-  if (to.startsWith("group:")) {
-    return { type: "group", id: to.slice(6) };
+  // 去掉 qqbot: 前缀
+  let id = to.replace(/^qqbot:/i, "");
+  
+  if (id.startsWith("c2c:")) {
+    return { type: "c2c", id: id.slice(4) };
   }
-  if (to.startsWith("channel:")) {
-    return { type: "channel", id: to.slice(8) };
+  if (id.startsWith("group:")) {
+    return { type: "group", id: id.slice(6) };
   }
-  // openid 通常是 32 位十六进制
-  if (/^[A-F0-9]{32}$/i.test(to)) {
-    return { type: "c2c", id: to };
+  if (id.startsWith("channel:")) {
+    return { type: "channel", id: id.slice(8) };
   }
-  // 默认当作频道 ID
-  return { type: "channel", id: to };
+  // 默认当作 c2c（私聊）
+  return { type: "c2c", id };
 }
 
 /**
- * 发送文本消息（被动回复，需要 replyToId）
+ * 发送文本消息
+ * - 有 replyToId: 被动回复，无配额限制
+ * - 无 replyToId: 主动发送，有配额限制（每月4条/用户/群）
  */
 export async function sendText(ctx: OutboundContext): Promise<OutboundResult> {
   const { to, text, replyToId, account } = ctx;
+
+  console.log("[qqbot] sendText ctx:", JSON.stringify({ to, text: text?.slice(0, 50), replyToId, accountId: account.accountId }, null, 2));
 
   if (!account.appId || !account.clientSecret) {
     return { channel: "qqbot", error: "QQBot not configured (missing appId or clientSecret)" };
@@ -59,15 +65,32 @@ export async function sendText(ctx: OutboundContext): Promise<OutboundResult> {
   try {
     const accessToken = await getAccessToken(account.appId, account.clientSecret);
     const target = parseTarget(to);
+    console.log("[qqbot] sendText target:", JSON.stringify(target));
 
+    // 如果没有 replyToId，使用主动发送接口
+    if (!replyToId) {
+      if (target.type === "c2c") {
+        const result = await sendProactiveC2CMessage(accessToken, target.id, text);
+        return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
+      } else if (target.type === "group") {
+        const result = await sendProactiveGroupMessage(accessToken, target.id, text);
+        return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
+      } else {
+        // 频道暂不支持主动消息
+        const result = await sendChannelMessage(accessToken, target.id, text);
+        return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
+      }
+    }
+
+    // 有 replyToId，使用被动回复接口
     if (target.type === "c2c") {
-      const result = await sendC2CMessage(accessToken, target.id, text, replyToId ?? undefined);
+      const result = await sendC2CMessage(accessToken, target.id, text, replyToId);
       return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
     } else if (target.type === "group") {
-      const result = await sendGroupMessage(accessToken, target.id, text, replyToId ?? undefined);
+      const result = await sendGroupMessage(accessToken, target.id, text, replyToId);
       return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
     } else {
-      const result = await sendChannelMessage(accessToken, target.id, text, replyToId ?? undefined);
+      const result = await sendChannelMessage(accessToken, target.id, text, replyToId);
       return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
     }
   } catch (err) {
