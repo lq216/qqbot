@@ -21,6 +21,7 @@ interface QQBotChannelConfig {
   clientSecretFile?: string;
   name?: string;
   imageServerBaseUrl?: string;
+  markdownSupport?: boolean;
   accounts?: Record<string, {
     enabled?: boolean;
     appId?: string;
@@ -28,6 +29,7 @@ interface QQBotChannelConfig {
     clientSecretFile?: string;
     name?: string;
     imageServerBaseUrl?: string;
+    markdownSupport?: boolean;
   }>;
 }
 
@@ -202,6 +204,12 @@ statusLines: [`QQ Bot: ${configured ? "已配置" : "需要 AppID 和 ClientSecr
 
     // 应用配置
     if (appId && clientSecret) {
+      // 询问是否启用 Markdown 支持
+      const enableMarkdown = await prompter.confirm({
+        message: "是否启用 Markdown 消息格式？（需要机器人具备该权限，默认关闭）",
+        initialValue: false,
+      });
+
       if (accountId === DEFAULT_ACCOUNT_ID) {
         next = {
           ...next,
@@ -212,6 +220,7 @@ statusLines: [`QQ Bot: ${configured ? "已配置" : "需要 AppID 和 ClientSecr
               enabled: true,
               appId,
               clientSecret,
+              markdownSupport: enableMarkdown,
             },
           },
         };
@@ -230,6 +239,7 @@ statusLines: [`QQ Bot: ${configured ? "已配置" : "需要 AppID 和 ClientSecr
                   enabled: true,
                   appId,
                   clientSecret,
+                  markdownSupport: enableMarkdown,
                 },
               },
             },
