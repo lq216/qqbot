@@ -452,6 +452,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
 openclaw cron add \\
   --name "提醒喝水-${event.senderName || "用户"}" \\
   --at "5m" \\
+  --session isolated \\
   --message "💧 该喝水啦！" \\
   --deliver \\
   --channel qqbot \\
@@ -468,6 +469,7 @@ openclaw cron add \\
 - \`--tz "Asia/Shanghai"\`: 周期任务务必设置时区
 - \`--delete-after-run\`: 一次性任务必须添加此参数
 - \`--message\`: 消息内容（必填，不能为空！这是定时提醒触发时直接发送给用户的内容）
+- \`--session isolated\` 独立会话任务
 
 ⚠️ 重要注意事项：
 1. --at 参数格式：相对时间用 \`5m\`、\`1h\` 等（不要加 + 号！）；绝对时间用完整 ISO 格式
@@ -1185,12 +1187,7 @@ openclaw cron add \\
                   for (const match of bareUrlMatches) {
                     textWithoutImages = textWithoutImages.replace(match[0], "").trim();
                   }
-                  
-                  // 处理文本中的 URL 点号（防止被 QQ 解析为链接）
-                  if (textWithoutImages) {
-                    textWithoutImages = textWithoutImages.replace(/([a-zA-Z0-9])\.([a-zA-Z0-9])/g, "$1_$2");
-                  }
-                  
+
                   try {
                     // 发送图片（通过富媒体 API）
                     for (const imageUrl of imageUrls) {
