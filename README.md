@@ -17,12 +17,17 @@ QQ 开放平台Bot API 的 Moltbot 渠道插件，支持 C2C 私聊、群聊 @�
 **使用`openclaw plugins list`来产看插件版本，建议使用最新版的版本**
 <img width="902" height="248" alt="Clipboard_Screenshot_1769739939" src="https://github.com/user-attachments/assets/d6f37458-900c-4de9-8fdc-f8e6bf5c7ee5" />
 
-### 1.3.0（即将更新）
+### 1.4.0（即将更新）
+- 支持Markdonw格式
+
+  
+### 1.3.0-2026.02.03
 - 支持图片收发等功能
   <img width="924" height="428" alt="Clipboard_Screenshot_1770112572" src="https://github.com/user-attachments/assets/80f38ae9-dc40-4545-ad17-e7e254064cf4" />
 
 - 支持定时任务到时后主动推送
   <img width="930" height="288" alt="Clipboard_Screenshot_1770112539" src="https://github.com/user-attachments/assets/9674cda0-91e9-4860-8dcc-bc50007862a2" />
+- 优化一些已知问题
 
 
 ### 1.2.5-2026.02.02
