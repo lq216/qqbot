@@ -3,7 +3,7 @@
 QQ 开放平台Bot API 的 Moltbot 渠道插件，支持 C2C 私聊、群聊 @消息、频道消息。
 
 ## 使用示例：
-<img width="1440" height="4719" alt="Clipboard_Screenshot_1770195414" src="https://github.com/user-attachments/assets/6f1704ab-584b-497e-8937-96f84ce2958f" />
+<img width="600" height="2019" alt="Clipboard_Screenshot_1770195414" src="https://github.com/user-attachments/assets/6f1704ab-584b-497e-8937-96f84ce2958f" />
 
 
 ## 版本更新
