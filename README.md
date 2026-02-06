@@ -32,6 +32,7 @@ QQ 开放平台 Bot API 的 Openclaw 渠道插件，支持 C2C 私聊、群聊 @
 - ⌨️ **输入状态** - Bot 正在输入中状态提示
 - 🔄 **热更新** - 支持 npm 方式安装和热更新
 - 📝 **Markdown** - 支持 Markdown 格式（即将更新）
+- 📝 **Command** - 支持Openclaw原生命令
 
   
 ---
@@ -180,6 +181,14 @@ clawdbot gateway restart
 <summary><b>v1.4.0（即将更新）</b></summary>
 
 - 支持 Markdown 格式
+
+</details>
+
+<details>
+<summary><b>v1.3.13 - 2026.02.06</b></summary>
+
+- ✨ 支持Openclawd内置指令“/compact" , "/new"等（注意，/reset等命令有危险性，非常不建议把Bot拉入群聊）
+- 🐛 修复在一些情况下”正在输入“不生效的问题
 
 </details>
 
