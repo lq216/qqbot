@@ -111,3 +111,5 @@ openclaw gateway
 
 <img width="990" height="984" alt="18" src="https://github.com/user-attachments/assets/b2776c8b-de72-4e37-b34d-e8287ce45de1" />
 
+# 其他语言 README
+[英文](README.md)
