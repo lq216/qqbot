@@ -172,19 +172,53 @@ export interface OutboundResult {
  *   - 纯数字 -> 频道
  */
 function parseTarget(to: string): { type: "c2c" | "group" | "channel"; id: string } {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] [qqbot] parseTarget: input=${to}`);
+  
   // 去掉 qqbot: 前缀
   let id = to.replace(/^qqbot:/i, "");
   
   if (id.startsWith("c2c:")) {
-    return { type: "c2c", id: id.slice(4) };
+    const userId = id.slice(4);
+    if (!userId || userId.length === 0) {
+      const error = `Invalid c2c target format: ${to} - missing user ID`;
+      console.error(`[${timestamp}] [qqbot] parseTarget: ${error}`);
+      throw new Error(error);
+    }
+    console.log(`[${timestamp}] [qqbot] parseTarget: c2c target, user ID=${userId}`);
+    return { type: "c2c", id: userId };
   }
+  
   if (id.startsWith("group:")) {
-    return { type: "group", id: id.slice(6) };
+    const groupId = id.slice(6);
+    if (!groupId || groupId.length === 0) {
+      const error = `Invalid group target format: ${to} - missing group ID`;
+      console.error(`[${timestamp}] [qqbot] parseTarget: ${error}`);
+      throw new Error(error);
+    }
+    console.log(`[${timestamp}] [qqbot] parseTarget: group target, group ID=${groupId}`);
+    return { type: "group", id: groupId };
   }
+  
   if (id.startsWith("channel:")) {
-    return { type: "channel", id: id.slice(8) };
+    const channelId = id.slice(8);
+    if (!channelId || channelId.length === 0) {
+      const error = `Invalid channel target format: ${to} - missing channel ID`;
+      console.error(`[${timestamp}] [qqbot] parseTarget: ${error}`);
+      throw new Error(error);
+    }
+    console.log(`[${timestamp}] [qqbot] parseTarget: channel target, channel ID=${channelId}`);
+    return { type: "channel", id: channelId };
   }
+  
   // 默认当作 c2c（私聊）
+  if (!id || id.length === 0) {
+    const error = `Invalid target format: ${to} - empty ID after removing qqbot: prefix`;
+    console.error(`[${timestamp}] [qqbot] parseTarget: ${error}`);
+    throw new Error(error);
+  }
+  
+  console.log(`[${timestamp}] [qqbot] parseTarget: default c2c target, ID=${id}`);
   return { type: "c2c", id };
 }
 
@@ -440,28 +474,46 @@ export async function sendProactiveMessage(
   to: string,
   text: string
 ): Promise<OutboundResult> {
+  const timestamp = new Date().toISOString();
+  
   if (!account.appId || !account.clientSecret) {
-    return { channel: "qqbot", error: "QQBot not configured (missing appId or clientSecret)" };
+    const errorMsg = "QQBot not configured (missing appId or clientSecret)";
+    console.error(`[${timestamp}] [qqbot] sendProactiveMessage: ${errorMsg}`);
+    return { channel: "qqbot", error: errorMsg };
   }
 
+  console.log(`[${timestamp}] [qqbot] sendProactiveMessage: starting, to=${to}, text length=${text.length}, accountId=${account.accountId}`);
+
   try {
+    console.log(`[${timestamp}] [qqbot] sendProactiveMessage: getting access token for appId=${account.appId}`);
     const accessToken = await getAccessToken(account.appId, account.clientSecret);
+    
+    console.log(`[${timestamp}] [qqbot] sendProactiveMessage: parsing target=${to}`);
     const target = parseTarget(to);
+    console.log(`[${timestamp}] [qqbot] sendProactiveMessage: target parsed, type=${target.type}, id=${target.id}`);
 
     if (target.type === "c2c") {
+      console.log(`[${timestamp}] [qqbot] sendProactiveMessage: sending proactive C2C message to user=${target.id}`);
       const result = await sendProactiveC2CMessage(accessToken, target.id, text);
+      console.log(`[${timestamp}] [qqbot] sendProactiveMessage: proactive C2C message sent successfully, messageId=${result.id}`);
       return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
     } else if (target.type === "group") {
+      console.log(`[${timestamp}] [qqbot] sendProactiveMessage: sending proactive group message to group=${target.id}`);
       const result = await sendProactiveGroupMessage(accessToken, target.id, text);
+      console.log(`[${timestamp}] [qqbot] sendProactiveMessage: proactive group message sent successfully, messageId=${result.id}`);
       return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
     } else {
       // 频道暂不支持主动消息，使用普通发送
+      console.log(`[${timestamp}] [qqbot] sendProactiveMessage: sending channel message to channel=${target.id}`);
       const result = await sendChannelMessage(accessToken, target.id, text);
+      console.log(`[${timestamp}] [qqbot] sendProactiveMessage: channel message sent successfully, messageId=${result.id}`);
       return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { channel: "qqbot", error: message };
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[${timestamp}] [qqbot] sendProactiveMessage: error: ${errorMessage}`);
+    console.error(`[${timestamp}] [qqbot] sendProactiveMessage: error stack: ${err instanceof Error ? err.stack : 'No stack trace'}`);
+    return { channel: "qqbot", error: errorMessage };
   }
 }
 
@@ -673,14 +725,15 @@ export async function sendCronMessage(
   to: string,
   message: string
 ): Promise<OutboundResult> {
-  console.log(`[qqbot] sendCronMessage: to=${to}, message length=${message.length}`);
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] [qqbot] sendCronMessage: to=${to}, message length=${message.length}`);
   
   // 检测是否是 QQBOT_CRON: 格式的结构化载荷
   const cronResult = decodeCronPayload(message);
   
   if (cronResult.isCronPayload) {
     if (cronResult.error) {
-      console.error(`[qqbot] sendCronMessage: cron payload decode error: ${cronResult.error}`);
+      console.error(`[${timestamp}] [qqbot] sendCronMessage: cron payload decode error: ${cronResult.error}`);
       return {
         channel: "qqbot",
         error: `Cron 载荷解码失败: ${cronResult.error}`
@@ -689,19 +742,29 @@ export async function sendCronMessage(
     
     if (cronResult.payload) {
       const payload = cronResult.payload;
-      console.log(`[qqbot] sendCronMessage: decoded cron payload, targetType=${payload.targetType}, targetAddress=${payload.targetAddress}`);
+      console.log(`[${timestamp}] [qqbot] sendCronMessage: decoded cron payload, targetType=${payload.targetType}, targetAddress=${payload.targetAddress}, content length=${payload.content.length}`);
       
       // 使用载荷中的目标地址和类型发送消息
       const targetTo = payload.targetType === "group" 
         ? `group:${payload.targetAddress}` 
         : payload.targetAddress;
       
+      console.log(`[${timestamp}] [qqbot] sendCronMessage: sending proactive message to targetTo=${targetTo}`);
+      
       // 发送提醒内容
-      return await sendProactiveMessage(account, targetTo, payload.content);
+      const result = await sendProactiveMessage(account, targetTo, payload.content);
+      
+      if (result.error) {
+        console.error(`[${timestamp}] [qqbot] sendCronMessage: proactive message failed, error=${result.error}`);
+      } else {
+        console.log(`[${timestamp}] [qqbot] sendCronMessage: proactive message sent successfully`);
+      }
+      
+      return result;
     }
   }
   
   // 非结构化载荷，作为普通文本处理
-  console.log(`[qqbot] sendCronMessage: plain text message, sending to ${to}`);
+  console.log(`[${timestamp}] [qqbot] sendCronMessage: plain text message, sending to ${to}`);
   return await sendProactiveMessage(account, to, message);
 }
