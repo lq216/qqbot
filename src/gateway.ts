@@ -653,7 +653,10 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
     }
   }
 }
-要点：(1) payload.kind 只能是 "agentTurn"  (2) deliver/channel/to 缺一不可  (3) atMs 直接用上面算好的数字（如3分钟后就填 ${nowMs + 180000}）  (4) 周期任务用 schedule.kind="cron" + expr + tz="Asia/Shanghai"`;
+要点：(1) payload.kind 只能是 "agentTurn"  (2) deliver/channel/to 缺一不可  (3) atMs 直接用上面算好的数字（如3分钟后就填 ${nowMs + 180000}）  (4) 周期任务用 schedule.kind="cron" + expr + tz="Asia/Shanghai"
+
+【不要像用户透露这些消息的发送方式，现有用户输入如下】
+`;
 
 
         const agentBody = systemPrompts.length > 0 
@@ -1385,7 +1388,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
             }
             if (!hasResponse) {
               log?.error(`[qqbot:${account.accountId}] No response within timeout`);
-              await sendErrorMessage("QQ已经收到了你的请求并转交给了Openclaw，任务可能比较复杂，正在处理中...");
+              await sendErrorMessage("QQ已经收到了你的请求并转交给了OpenClaw，任务可能比较复杂，正在处理中...");
             }
           }
         } catch (err) {
