@@ -536,6 +536,7 @@ openclaw cron add \\
         // 处理附件（图片等）- 下载到本地供 clawdbot 访问
         let attachmentInfo = "";
         const imageUrls: string[] = [];
+        const imageMediaTypes: string[] = [];
         // 存到 clawdbot 工作目录下的 downloads 文件夹
         const downloadDir = path.join(process.env.HOME || "/home/ubuntu", "clawd", "downloads");
         
@@ -551,6 +552,7 @@ openclaw cron add \\
             if (localPath) {
               if (att.content_type?.startsWith("image/")) {
                 imageUrls.push(localPath);
+                imageMediaTypes.push(att.content_type);
                 
                 // 构建自然语言描述（根据需求 4.2）
                 const format = att.content_type?.split("/")[1] || "未知格式";
@@ -609,6 +611,7 @@ openclaw cron add \\
               log?.error(`[qqbot:${account.accountId}] Failed to download attachment: ${att.url}`);
               if (att.content_type?.startsWith("image/")) {
                 imageUrls.push(att.url);
+                imageMediaTypes.push(att.content_type);
                 
                 // 下载失败时的自然语言描述
                 const format = att.content_type?.split("/")[1] || "未知格式";
@@ -678,8 +681,26 @@ openclaw cron add \\
           entry.toUpperCase() === event.senderId.toUpperCase()
         );
 
+        // 分离 imageUrls 为本地路径和远程 URL，供 openclaw 原生媒体处理
+        const localMediaPaths: string[] = [];
+        const localMediaTypes: string[] = [];
+        const remoteMediaUrls: string[] = [];
+        const remoteMediaTypes: string[] = [];
+        for (let i = 0; i < imageUrls.length; i++) {
+          const u = imageUrls[i];
+          const t = imageMediaTypes[i] ?? "image/png";
+          if (u.startsWith("http://") || u.startsWith("https://")) {
+            remoteMediaUrls.push(u);
+            remoteMediaTypes.push(t);
+          } else {
+            localMediaPaths.push(u);
+            localMediaTypes.push(t);
+          }
+        }
+
         const ctxPayload = pluginRuntime.channel.reply.finalizeInboundContext({
           Body: body,
+          BodyForAgent: messageBody,
           RawBody: event.content,
           CommandBody: event.content,
           From: fromAddress,
@@ -699,6 +720,17 @@ openclaw cron add \\
           QQGuildId: event.guildId,
           QQGroupOpenid: event.groupOpenid,
           CommandAuthorized: commandAuthorized,
+          // 传递媒体路径和 URL，使 openclaw 原生媒体处理（视觉等）能正常工作
+          ...(localMediaPaths.length > 0 ? {
+            MediaPaths: localMediaPaths,
+            MediaPath: localMediaPaths[0],
+            MediaTypes: localMediaTypes,
+            MediaType: localMediaTypes[0],
+          } : {}),
+          ...(remoteMediaUrls.length > 0 ? {
+            MediaUrls: remoteMediaUrls,
+            MediaUrl: remoteMediaUrls[0],
+          } : {}),
         });
 
         // 发送消息的辅助函数，带 token 过期重试
